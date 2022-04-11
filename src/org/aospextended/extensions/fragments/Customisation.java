@@ -27,9 +27,16 @@ import android.content.om.OverlayInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.Color;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
@@ -61,9 +68,12 @@ import com.android.settings.search.BaseSearchIndexProvider;
 import com.android.settingslib.search.Indexable;
 import com.android.settingslib.search.SearchIndexable;
 
+import java.io.FileDescriptor;
 import java.util.ArrayList;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Collection;
 import java.util.List;
 import java.util.List;
 import java.util.Locale;
@@ -71,6 +81,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.aospextended.support.colorpicker.ColorPickerPreference;
+import org.aospextended.extensions.fragments.UdfpsIconPicker;
 
 @SearchIndexable
 public class Customisation extends SettingsPreferenceFragment implements OnPreferenceChangeListener {
@@ -78,7 +89,15 @@ public class Customisation extends SettingsPreferenceFragment implements OnPrefe
     private static final String TAG = "Customisation";
 
     private Context mContext;
+    
+    private static final String CUSTOM_FOD_ICON_KEY = "custom_fp_icon_enabled";
+    private static final String CUSTOM_FP_FILE_SELECT = "custom_fp_file_select";
+    private static final int REQUEST_PICK_IMAGE = 0;
 
+    private Preference mCustomFPImage;
+    private SystemSettingSwitchPreference mCustomFodIcon;
+    private Preference mUdfpsIconPicker;
+    
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -90,12 +109,30 @@ public class Customisation extends SettingsPreferenceFragment implements OnPrefe
         final ContentResolver resolver = getActivity().getContentResolver();
         final PreferenceScreen screen = getPreferenceScreen();
 
+        /**
         boolean udfpsResPkgInstalled = AEXUtils.isPackageInstalled(getContext(),
                 "org.aospextended.udfps.resources");
-        PreferenceCategory udfps = (PreferenceCategory) screen.findPreference("udfps_category");
-        if (!udfpsResPkgInstalled) {
-            screen.removePreference(udfps);
+        
+        PreferenceCategory udfps = (PreferenceCategory) screen.findPreference("udfps_category");*/
+        
+        mUdfpsIconPicker = (PreferenceCategory) Screen.findPreference("udfps_icon_picker");
+
+        mCustomFPImage = findPreference(CUSTOM_FP_FILE_SELECT);
+        final String customIconURI = Settings.System.getString(getContext().getContentResolver(),
+               Settings.System.OMNI_CUSTOM_FP_ICON);
+        if (!TextUtils.isEmpty(customIconURI)) {
+            setPickerIcon(customIconURI);
         }
+
+        mCustomFodIcon = (SystemSettingSwitchPreference) findPreference(CUSTOM_FOD_ICON_KEY);
+        boolean val = Settings.System.getIntForUser(getActivity().getContentResolver(),
+                Settings.System.OMNI_CUSTOM_FP_ICON_ENABLED, 0, UserHandle.USER_CURRENT) == 1;
+        mCustomFodIcon.setOnPreferenceChangeListener(this);
+        if (val) {
+            mUdfpsIconPicker.setEnabled(false);
+        } else {
+            mUdfpsIconPicker.setEnabled(true);
+        }        
     }
 
     @Override
@@ -107,12 +144,64 @@ public class Customisation extends SettingsPreferenceFragment implements OnPrefe
     public void onResume() {
         super.onResume();
     }
+    
+    @Override
+    public boolean onPreferenceTreeClick(Preference preference) {
+        if (preference == mCustomFPImage) {
+            Intent intent = new Intent(Intent.ACTION_PICK);
+            intent.setType("image/*");
+            startActivityForResult(intent, REQUEST_PICK_IMAGE);
+            return true;
+        }
+        return super.onPreferenceTreeClick(preference);
+    }
 
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
+        if (preference == mCustomFodIcon) {
+            boolean val = (Boolean) newValue;
+            Settings.System.putIntForUser(getActivity().getContentResolver(),
+                    Settings.System.OMNI_CUSTOM_FP_ICON_ENABLED, val ? 1 : 0,
+                    UserHandle.USER_CURRENT);
+            if (val) {
+                mUdfpsIconPicker.setEnabled(false);
+            } else {
+                mUdfpsIconPicker.setEnabled(true);
+            }
+            return true;
+        }
         return false;
     }
 
+    @Override
+    public void onActivityResult(int requestCode, int resultCode, Intent result) {
+       if (requestCode == REQUEST_PICK_IMAGE && resultCode == Activity.RESULT_OK) {
+           Uri uri = null;
+           if (result != null) {
+               uri = result.getData();
+               setPickerIcon(uri.toString());
+               Settings.System.putString(getContentResolver(), Settings.System.OMNI_CUSTOM_FP_ICON,
+                   uri.toString());
+            }
+        } else if (requestCode == REQUEST_PICK_IMAGE && resultCode == Activity.RESULT_CANCELED) {
+            mCustomFPImage.setIcon(new ColorDrawable(Color.TRANSPARENT));
+            Settings.System.putString(getContentResolver(), Settings.System.OMNI_CUSTOM_FP_ICON, "");
+        }
+    }
+
+    private void setPickerIcon(String uri) {
+        try {
+                ParcelFileDescriptor parcelFileDescriptor =
+                    getContext().getContentResolver().openFileDescriptor(Uri.parse(uri), "r");
+                FileDescriptor fileDescriptor = parcelFileDescriptor.getFileDescriptor();
+                Bitmap image = BitmapFactory.decodeFileDescriptor(fileDescriptor);
+                parcelFileDescriptor.close();
+                Drawable d = new BitmapDrawable(getResources(), image);
+                mCustomFPImage.setIcon(d);
+            }
+            catch (Exception e) {}
+    }
+    
     public static final SearchIndexProvider SEARCH_INDEX_DATA_PROVIDER =
         new BaseSearchIndexProvider() {
             @Override
